@@ -1,4 +1,6 @@
 # Wi-Fi Fundamentals Course Exercises
+I made this fork to keep exercises for this course in a repository i have access rights to. 
+
 This repository is part of the [Wi-Fi Fundamentals](https://academy.nordicsemi.com/courses/wi-fi-fundamentals/) course by [Nordic Developer Academy](https://academy.nordicsemi.com).
 
 The Wi-Fi Fundamentals course is an online, self-paced course that focuses on teaching the basics of Wi-Fi using Nordic Semiconductor’s nRF7002 companion IC. Through hands-on learning, participants will learn how to create a Wi-Fi prototype using the highly extensible and feature-right nRF Connect SDK.
