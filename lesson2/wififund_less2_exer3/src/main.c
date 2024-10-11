@@ -68,7 +68,7 @@ static void net_mgmt_event_handler(struct net_mgmt_event_callback *cb, uint32_t 
 #define ADV_DATA_FLAG_IDX (BT_UUID_SIZE_128 + 1)
 #define ADV_DATA_FLAG_PROV_STATUS_BIT BIT(0)
 #define ADV_DATA_FLAG_CONN_STATUS_BIT BIT(1)
-#define ADV_DATA_RSSI_IDX (BT_UUID_128 + 3)
+#define ADV_DATA_RSSI_IDX (BT_UUID_SIZE_128 + 3)
 
 #define PROV_BT_LE_ADV_PARAM_FAST BT_LE_ADV_PARAM(BT_LE_ADV_OPT_CONNECTABLE, \
 						BT_GAP_ADV_FAST_INT_MIN_2, \
