@@ -20,14 +20,10 @@
 #include <net/wifi_credentials.h>
 #include <zephyr/net/socket.h>
 
-#if NCS_VERSION_NUMBER < 0x20600
-#include <zephyr/random/rand32.h>
-#else 
 #include <zephyr/random/random.h>
-#endif
 
 /* STEP 1.3 - Include the header file for the MQTT library */
-
+#include <zephyr/net/mqtt.h>
 
 LOG_MODULE_REGISTER(Lesson4_Exercise1, LOG_LEVEL_INF);
 
@@ -134,10 +130,22 @@ static int get_received_payload(struct mqtt_client *c, size_t length)
 static int subscribe(struct mqtt_client *const c)
 {
 	/* STEP 3.1 - Declare a variable of type mqtt_topic */
-
+	struct mqtt_topic subscribe_topic = {
+		.topic = {
+			.utf8 = CONFIG_MQTT_SUB_TOPIC,
+			.size = strlen(CONFIG_MQTT_SUB_TOPIC)
+		},
+		.qos = MQTT_QOS_1_AT_LEAST_ONCE
+	};
 	/* STEP 3.2 - Define a subscription list */
-
+	const struct mqtt_subscription_list sub_list = {
+		.list = &subscribe_topic,
+		.list_count = 1,
+		.message_id = 2137
+	};
 	/* STEP 3.3 - Subscribe to the topics */
+	LOG_INF("Subscribing to %s", CONFIG_MQTT_SUB_TOPIC);
+	return mqtt_subscribe(c, &sub_list);
 }
 
 static void data_print(uint8_t *prefix, uint8_t *data, size_t len)
@@ -150,6 +158,24 @@ static void data_print(uint8_t *prefix, uint8_t *data, size_t len)
 }
 
 /* STEP 6 - Define the function to publish data */
+int publish(struct mqtt_client *c, enum mqtt_qos qos, uint8_t* data, size_t len) 
+{
+	struct mqtt_publish_param param;
+
+	param.message.topic.qos = qos;
+	param.message.topic.topic.utf8 = CONFIG_MQTT_PUB_TOPIC;
+	param.message.topic.topic.size = strlen(CONFIG_MQTT_PUB_TOPIC);
+	param.message.payload.data = data;
+	param.message.payload.len = len;
+	param.message_id = sys_rand32_get();
+	param.dup_flag = 0;
+	param.retain_flag = 0;
+
+	data_print("Publishing: ", data, len);
+	LOG_INF("to topic: %s len: %u", CONFIG_MQTT_PUB_TOPIC, (unsigned int)strlen(CONFIG_MQTT_PUB_TOPIC));
+
+	return mqtt_publish(c, &param);
+}
 
 void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
 {
@@ -158,7 +184,15 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
 	switch (evt->type) {
 	case MQTT_EVT_CONNACK:
 		/* STEP 4 - Upon a successful connection, subscribe to topics */
-		
+		if (evt->result != 0) {
+			LOG_ERR("MQTT connection failed %d", evt->result);
+			break;
+		}
+
+		LOG_INF("MQTT client connected");
+		subscribe(c);
+		break;
+
 	case MQTT_EVT_DISCONNECT:
 		LOG_INF("MQTT client disconnected: %d", evt->result);
 		break;
@@ -168,12 +202,38 @@ void mqtt_evt_handler(struct mqtt_client *const c, const struct mqtt_evt *evt)
 		 * message */
 		{
 			/* STEP 5.1 - Extract the payload and (if relevant) send acknowledgement */
+			const struct mqtt_publish_param *p = &evt->param.publish;
+			err = get_received_payload(c, p->message.payload.len);
 
+			if (p->message.topic.qos == MQTT_QOS_1_AT_LEAST_ONCE) {
+				const struct mqtt_puback_param ack = {
+					.message_id = p->message_id
+				};
+				mqtt_publish_qos1_ack(c, &ack);
+			}
 			/* STEP 5.2 - On successful extraction of data, exmaine command and toggle
 			 * LED accordingly */
-
-			/* STEP 5.3 - On failed extraction of data, examine error code */
-			
+			if (err >= 0) {
+				data_print("Received: ", payload_buf, p->message.payload.len);
+				if (strncmp(payload_buf, CONFIG_LED1_ON_CMD, sizeof(CONFIG_LED1_ON_CMD) - 1) == 0) {
+					dk_set_led_on(DK_LED1);
+				} else if (strncmp(payload_buf, CONFIG_LED1_OFF_CMD, sizeof(CONFIG_LED1_OFF_CMD) - 1) == 0) {
+					dk_set_led_off(DK_LED1);
+				} else if (strncmp(payload_buf, CONFIG_LED2_ON_CMD, sizeof(CONFIG_LED2_ON_CMD) - 1) == 0) {
+					dk_set_led_on(DK_LED2);
+				} else if (strncmp(payload_buf, CONFIG_LED2_OFF_CMD, sizeof(CONFIG_LED2_OFF_CMD) - 1) == 0) {
+					dk_set_led_off(DK_LED2);
+				}
+			} else if (err == -EMSGSIZE) {/* STEP 5.3 - On failed extraction of data, examine error code */
+				LOG_ERR("Received payload (%d bytes) is larger than the payload buffer size (%d bytes).", p->message.payload.len, sizeof(payload_buf));
+			} else {
+				LOG_ERR("get_received_payload failed: %d", err);
+				LOG_INF("Disconnecting MQTT client...");
+				err = mqtt_disconnect(c);
+				if (err) {
+					LOG_ERR("Could not disconnect: %d", err);
+				}
+			}
 		}
 		break;
 	case MQTT_EVT_PUBACK:
@@ -223,15 +283,28 @@ int client_init(struct mqtt_client *client)
 {
 	int err;
 	/* STEP 2.1 - Initialize the client instance */
-
+	mqtt_client_init(client);
 	/* STEP 2.2 - Resolve the configured hostname and initializes the MQTT broker structure */
-
+	err = server_resolve();
+	if (err) {
+		LOG_ERR("Failed to initialize MQTT connection");
+		return err;
+	}
 	/* STEP 2.3 - MQTT client configuration */
-
+	client->broker = &server;
+	client->evt_cb = mqtt_evt_handler;
+	client->client_id.utf8 = client_id_get();
+	client->client_id.size = strlen(client->client_id.utf8);
+	client->password = NULL;
+	client->user_name = NULL;
+	client->protocol_version = MQTT_VERSION_3_1_1;
 	/* STEP 2.4 - MQTT buffers configuration */
-
+	client->rx_buf = rx_buffer;
+	client->rx_buf_size = sizeof(rx_buffer);
+	client->tx_buf = tx_buffer;
+	client->tx_buf_size = sizeof(tx_buffer);
 	/* STEP 2.5 - Set the transport type to non-secure */
-
+	client->transport.type = MQTT_TRANSPORT_NON_SECURE;
 	return err;
 }
 
@@ -240,10 +313,19 @@ static void button_handler(uint32_t button_state, uint32_t has_changed)
 	int err;
 	if (has_changed & DK_BTN1_MSK && button_state & DK_BTN1_MSK) {
 		/* STEP 7.1 - When button 1 is pressed, send a message */
+		err = publish(&client, MQTT_QOS_1_AT_LEAST_ONCE, CONFIG_BUTTON1_MSG, sizeof(CONFIG_BUTTON1_MSG));
+		if (err) {
+			LOG_ERR("Failed to send message, %d", err);
+			return;
+		}
 
 	} else if (has_changed & DK_BTN2_MSK && button_state & DK_BTN2_MSK) {
 		/* STEP 7.2 - When button 2 is pressed, send a message */
-
+		err = publish(&client, MQTT_QOS_1_AT_LEAST_ONCE, CONFIG_BUTTON2_MSG, sizeof(CONFIG_BUTTON2_MSG));
+		if (err) {
+			LOG_ERR("Failed to send message, %d", err);
+			return;
+		}
 	}
 }
 
@@ -284,14 +366,44 @@ do_connect:
 	}
 
 	/* STEP 8 - Establish a connection the MQTT broker */
-
+	err = mqtt_connect(&client);
+	if (err) {
+		LOG_ERR("Error in mqtt_connect: %d", err);
+		goto do_connect;
+	}
 	/* STEP 9.1 - Configure fds to monitor the socket */
+	fds.fd = client.transport.tcp.sock;
+	fds.events = POLLIN;
 
 	while (1) {
 		/* STEP 9.2 - Continously poll the socket for incoming data */
-
+		err = poll(&fds, 1, mqtt_keepalive_time_left(&client));
+		if (err < 0) {
+			LOG_ERR("Error in poll(): %d", errno);
+			break;
+		}
+		err = mqtt_live(&client);
+		if ((err != 0) && (err != -EAGAIN)) {
+			LOG_ERR("Error in mqtt_live: %d", err);
+			break;
+		}
 		/* STEP 9.3 - In the event of incoming data, process it */
-		
+		if ((fds.revents & POLLIN) == POLLIN) {
+			err = mqtt_input(&client);
+			if (err != 0) {
+				LOG_ERR("Error in mqtt_input: %d", err);
+				break;
+			}
+		}
+		if ((fds.revents & POLLERR) == POLLERR) {
+			LOG_ERR("POLLERR");
+			break;
+		}
+
+		if ((fds.revents & POLLNVAL) == POLLNVAL) {
+			LOG_ERR("POLLNVAL");
+			break;
+		}	
 	}
 
 	LOG_INF("Disconnecting MQTT client");
